@@ -1,0 +1,13 @@
+{
+  "name": "subsgigs-cloud",
+  "version": "19.2.2",
+  "private": true,
+  "type": "module",
+  "description": "Cloud port of SubsGigs Auto Save Engine v19.2.2 for a single Railway worker",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  }
+}
