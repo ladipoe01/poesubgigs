@@ -36,11 +36,11 @@ async function shutdown(signal) {
     shuttingDown = true;
     log(`${signal} received`);
     engine.stop();
-    await closePersistentBrowser();
     const started = Date.now();
     while (engine.busy() && Date.now() - started < 14000) {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
+    await closePersistentBrowser();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1000).unref();
 }
