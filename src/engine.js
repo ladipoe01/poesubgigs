@@ -7,7 +7,6 @@ import { startPersistentBrowser, submitCampaign } from './browser.js';
 import {
     absorbCookies,
     accessToken,
-    cookieHeader,
     expiryLeft,
     ingestAuthCookie,
     isCheckpoint,
@@ -231,13 +230,6 @@ function currentDeployment() {
     return store.deploymentId || config.defaultDeploymentId;
 }
 
-function buildPacket(campaignId) {
-    const body = new FormData();
-    body.append('_1_campaignId', String(campaignId));
-    body.append('0', '[{},"$K1"]');
-    return body;
-}
-
 function savedText(response, text) {
     if (!response) return false;
     if (/"success"\s*:\s*"Spot saved/i.test(text || '')) return true;
@@ -354,7 +346,6 @@ async function saveOnce(campaignId) {
     }
 
     const beforePromise = spotsLeft(campaignId);
-    const body = buildPacket(campaignId);
     saveInflight.add(campaignId);
     recordPostLedger(campaignId);
     const started = performance.now();
@@ -362,15 +353,6 @@ async function saveOnce(campaignId) {
     showArmLabel('SAVE SENT');
 
     try {
-        const headers = {
-            Accept: 'text/x-component',
-            'next-action': currentAction(),
-            'next-router-state-tree': routerTree(),
-            'x-deployment-id': currentDeployment(),
-            Origin: config.siteOrigin,
-            Referer: `${config.siteOrigin}/campaigns`,
-            'User-Agent': config.userAgent
-        };
         const posted = await submitCampaign(campaignId, currentAction(), routerTree(), currentDeployment());
         const rtt = performance.now() - started;
         clock.update(posted, started);
