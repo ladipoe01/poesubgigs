@@ -65,6 +65,10 @@ export function chunkCookie(name, value) {
 
 export function coerceSession(input) {
     if (!input) return null;
+    if (typeof input === 'object') {
+        const session = input.currentSession || input;
+        return session && typeof session === 'object' && (session.access_token || session.refresh_token) ? session : null;
+    }
     let raw = String(input).trim();
     if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
         try { raw = JSON.parse(raw); } catch { raw = raw.slice(1, -1); }
@@ -77,7 +81,8 @@ export function coerceSession(input) {
     if (!raw.startsWith('{')) return null;
     try {
         const session = JSON.parse(raw);
-        return session && (session.access_token || session.refresh_token) ? session : null;
+        const value = session?.currentSession || session;
+        return value && (value.access_token || value.refresh_token) ? value : null;
     } catch {
         return null;
     }
