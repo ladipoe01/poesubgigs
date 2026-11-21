@@ -11,7 +11,6 @@ import {
     ingestAuthCookie,
     isCheckpoint,
     loadState,
-    loginWithPassword,
     persist,
     refreshSession,
     store,
@@ -845,25 +844,29 @@ async function goLogin(nested = false) {
     }
 }
 
-async function scheduleRotate(recover) {
+async function scheduleRotate() {
     if (Date.now() < store.rotateUntil || authBusy) return;
     store.rotateUntil = Date.now() + 8000;
     authBusy = true;
-    showArmLabel(recover ? 'RENEWING AFTER SNAG' : 'RENEWING LOGIN');
+    showArmLabel('REFRESHING SESSION');
     try {
         const ok = await refreshSession();
         if (ok) {
             store.rotateFails = 0;
             store.rotateUntil = Date.now() + 20 * 60 * 1000;
             sessionPause = false;
-            showArmLabel('LOGIN RENEWED');
+            showArmLabel('SESSION REFRESHED');
+            log('stored browser session refreshed');
             return;
         }
         store.rotateFails += 1;
-        store.rotateUntil = 0;
+        store.rotateUntil = Date.now() + 60 * 1000;
         persist();
-        const left = expiryLeft();
-        if (recover || store.rotateFails >= 2 || left == null || left <= config.dangerBelowMs) await goLogin(true);
+        pauseSaves('SESSION REFRESH NEEDED');
+        if (store.rotateFails === 1 || store.rotateFails % 5 === 0) {
+            log('stored session refresh failed; waiting for a fresh browser session transfer');
+            await alertOnce('session-refresh-needed', '<b>SESSION REFRESH NEEDED</b>\n\nThe saved browser session could not be refreshed. Log in through Safari and transfer the session again. Automatic login is disabled.');
+        }
     } finally {
         authBusy = false;
     }
@@ -880,16 +883,16 @@ async function evaluateSession() {
     }
     if (session && left > config.dangerBelowMs) {
         sessionPause = false;
-        if (!hasImminentWindow()) await scheduleRotate(false);
+        if (!hasImminentWindow()) await scheduleRotate();
         return;
     }
-    if (session?.refresh_token && store.rotateFails < 2) {
-        pauseSaves(session ? 'TOKEN RISK' : 'SIGNED OUT');
-        await scheduleRotate(true);
+    if (session?.refresh_token) {
+        pauseSaves('TOKEN RISK');
+        await scheduleRotate();
         return;
     }
-    pauseSaves(session ? 'TOKEN RISK' : 'SIGNED OUT');
-    if (config.username || session) await goLogin();
+    pauseSaves('SESSION REQUIRED');
+    await alertOnce('session-transfer-needed', '<b>SESSION REQUIRED</b>\n\nLog in through Safari and transfer your browser session. Automatic login is disabled.');
 }
 
 function formatLeft(ms) {
