@@ -806,42 +806,9 @@ function hasImminentWindow() {
     return false;
 }
 
-async function goLogin(nested = false) {
-    if (!config.username || !config.password) {
-        pauseSaves('SET LOGIN');
-        await alertOnce('need-login', '<b>SESSION DOWN</b>\n\nSet SG_SESSION_JSON, or set SG_USERNAME and SG_PASSWORD.');
-        return;
-    }
-    if (store.loginFails >= 3) {
-        pauseSaves('LOGIN FAILED');
-        return;
-    }
-    if (authBusy && !nested) return;
-    if (!nested) authBusy = true;
-    showArmLabel('AUTO LOGIN');
-    try {
-        const result = await loginWithPassword({ deploymentId: currentDeployment() });
-        if (result.ok) {
-            store.loginFails = 0;
-            store.rotateFails = 0;
-            sessionPause = false;
-            showArmLabel('LOGIN RENEWED');
-            await sendTelegram('<b>LOGIN RENEWED</b>');
-            return;
-        }
-        if (result.reason === 'challenge') {
-            noteVercelLimit();
-            return;
-        }
-        store.loginFails += 1;
-        persist();
-        pauseSaves(store.loginFails >= 3 ? 'LOGIN FAILED' : 'LOGIN REJECTED');
-        if (store.loginFails >= 3) {
-            await sendTelegram('<b>LOGIN FAILED</b>\n\nCheck the username and password, then redeploy.');
-        }
-    } finally {
-        if (!nested) authBusy = false;
-    }
+async function goLogin() {
+    pauseSaves('SESSION REQUIRED');
+    await alertOnce('session-transfer-needed', '<b>SESSION REQUIRED</b>\n\nLog in through Safari and transfer your browser session. Automatic login is disabled.');
 }
 
 async function scheduleRotate() {
@@ -1050,7 +1017,7 @@ async function boot() {
     loadState();
     await startPersistentBrowser();
     log(`SubsGigs cloud v19.2.2 poll=${config.fastPollMs}ms dryRun=${config.dryRun} baseline=${config.baseline}`);
-    if (!store.session && !config.username) {
+    if (!store.session) {
         pauseSaves('SET LOGIN');
         await alertOnce('need-login', '<b>SESSION DOWN</b>\n\nSet SG_SESSION_JSON, or set SG_USERNAME and SG_PASSWORD.');
     }
