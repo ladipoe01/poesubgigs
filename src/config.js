@@ -78,6 +78,7 @@ export const config = {
     vercelWaitMs: num('VERCEL_WAIT_MS', 60 * 1000),
     vercelWaitMaxMs: num('VERCEL_WAIT_MAX_MS', 5 * 60 * 1000),
     statePath: text('STATE_PATH', onRailway ? '/data/session.json' : path.join(root, 'data', 'session.json')),
+    browserProfilePath: text('BROWSER_PROFILE_PATH', onRailway ? '/data/profile' : path.join(root, 'data', 'profile')),
     port: num('PORT', 8080),
     statusToken: text('STATUS_TOKEN', ''),
     userAgent: text('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
