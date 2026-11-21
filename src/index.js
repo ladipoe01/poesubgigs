@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { config } from './config.js';
 import { engine } from './engine.js';
+import { closePersistentBrowser } from './browser.js';
 import { log } from './log.js';
 
 const server = http.createServer((req, res) => {
@@ -35,6 +36,7 @@ async function shutdown(signal) {
     shuttingDown = true;
     log(`${signal} received`);
     engine.stop();
+    await closePersistentBrowser();
     const started = Date.now();
     while (engine.busy() && Date.now() - started < 14000) {
         await new Promise(resolve => setTimeout(resolve, 100));
