@@ -1,11 +1,81 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { engine } from './engine.js';
 import { closePersistentBrowser } from './browser.js';
+import { applySession, coerceSession } from './session.js';
 import { log } from './log.js';
+
+const transferToken = process.env.SG_TRANSFER_TOKEN || '';
+const transferUsedPath = `${config.statePath}.transfer-used`;
+
+function send(res, status, body, origin = '') {
+    const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+    if (origin === config.siteOrigin) {
+        headers['Access-Control-Allow-Origin'] = config.siteOrigin;
+        headers['Vary'] = 'Origin';
+    }
+    res.writeHead(status, headers);
+    res.end(JSON.stringify(body));
+}
+
+function safeEqual(a, b) {
+    const left = Buffer.from(String(a));
+    const right = Buffer.from(String(b));
+    return left.length === right.length && timingSafeEqual(left, right);
+}
 
 const server = http.createServer((req, res) => {
     const path = (req.url || '/').split('?')[0];
+    const origin = req.headers.origin || '';
+
+    if (path === '/session-transfer' && req.method === 'OPTIONS') {
+        if (origin !== config.siteOrigin) return send(res, 403, { ok: false });
+        res.writeHead(204, {
+            'Access-Control-Allow-Origin': config.siteOrigin,
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '300',
+            'Vary': 'Origin'
+        });
+        return res.end();
+    }
+
+    if (path === '/session-transfer' && req.method === 'POST') {
+        if (!transferToken || origin !== config.siteOrigin) return send(res, 403, { ok: false }, origin);
+        if (fs.existsSync(transferUsedPath)) return send(res, 410, { ok: false, error: 'transfer already used' }, origin);
+
+        let raw = '';
+        req.on('data', chunk => {
+            raw += chunk;
+            if (raw.length > 65536) {
+                send(res, 413, { ok: false }, origin);
+                req.destroy();
+            }
+        });
+        req.on('end', () => {
+            let payload;
+            try { payload = JSON.parse(raw); } catch { return send(res, 400, { ok: false }, origin); }
+            if (!safeEqual(payload?.transferToken || '', transferToken)) {
+                return send(res, 403, { ok: false }, origin);
+            }
+            const session = coerceSession(payload?.session?.currentSession || payload?.session);
+            if (!session?.refresh_token) return send(res, 400, { ok: false, error: 'valid refresh session required' }, origin);
+
+            try {
+                fs.mkdirSync(new URL('.', `file://${config.statePath}`).pathname, { recursive: true });
+                fs.writeFileSync(transferUsedPath, new Date().toISOString(), { flag: 'wx', mode: 0o600 });
+                applySession(session);
+                log('one-time browser session transfer accepted');
+                return send(res, 200, { ok: true }, origin);
+            } catch (error) {
+                return send(res, 500, { ok: false, error: 'could not persist transferred session' }, origin);
+            }
+        });
+        return;
+    }
+
     if (path === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end('{"ok":true}');
@@ -17,7 +87,7 @@ const server = http.createServer((req, res) => {
             res.end();
             return;
         }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify(engine.snapshot()));
         return;
     }
