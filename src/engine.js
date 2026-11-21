@@ -3,6 +3,7 @@ import { clock } from './clock.js';
 import { log } from './log.js';
 import { alertOnce, sendTelegram } from './telegram.js';
 import { discoverBuild } from './discover.js';
+import { startPersistentBrowser, submitCampaign } from './browser.js';
 import {
     absorbCookies,
     accessToken,
@@ -370,17 +371,7 @@ async function saveOnce(campaignId) {
             Referer: `${config.siteOrigin}/campaigns`,
             'User-Agent': config.userAgent
         };
-        const cookie = cookieHeader();
-        if (cookie) headers.Cookie = cookie;
-        const posted = await fetch(`${config.siteOrigin}/campaigns`, {
-            method: 'POST',
-            body,
-            headers,
-            redirect: 'follow',
-            cache: 'no-store',
-            keepalive: true,
-            signal: AbortSignal.timeout(15000)
-        });
+        const posted = await submitCampaign(campaignId, currentAction(), routerTree(), currentDeployment());
         const rtt = performance.now() - started;
         clock.update(posted, started);
         clock.recordFlight(rtt);
@@ -1072,6 +1063,7 @@ function snapshot() {
 
 async function boot() {
     loadState();
+    await startPersistentBrowser();
     log(`SubsGigs cloud v19.2.2 poll=${config.fastPollMs}ms dryRun=${config.dryRun} baseline=${config.baseline}`);
     if (!store.session && !config.username) {
         pauseSaves('SET LOGIN');
