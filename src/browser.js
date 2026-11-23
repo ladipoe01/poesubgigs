@@ -92,13 +92,13 @@ export async function startPersistentBrowser() {
     }
 }
 
-export async function loginWithBrowser() {
+export async function loginWithBrowser(force = false) {
     if (!config.username || !config.password) return { ok: false, reason: 'missing-credentials' };
     if (loginInFlight) return loginInFlight;
     loginInFlight = (async () => {
         try {
             await startPersistentBrowser();
-            if (await readBrowserSession()) return { ok: true, reason: 'existing-session' };
+            if (!force && await readBrowserSession()) return { ok: true, reason: 'existing-session' };
             await page.goto(`${config.siteOrigin}/login`, { waitUntil: 'domcontentloaded', timeout: 20000 });
             const html = await page.content().catch(() => '');
             if (checkpointPattern.test(html)) return { ok: false, reason: 'checkpoint' };
