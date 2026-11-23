@@ -325,6 +325,7 @@ function finishSaved(campaignId) {
 }
 
 async function saveOnce(campaignId) {
+    if (config.monitorOnly) return 'monitor';
     if (!isCampaignId(campaignId)) return 'full';
     if (sessionPause || publicWait(campaignId)) return 'wait';
     if (Date.now() < vercelPauseUntil) return 'wait';
@@ -428,6 +429,7 @@ async function saveOnce(campaignId) {
 }
 
 async function pursue(campaignId, extra) {
+    if (config.monitorOnly) return;
     if (claimed.has(campaignId) || unavailable.has(campaignId) || holdingFull.has(campaignId)) return;
     if (sessionPause || publicWait(campaignId)) return;
     if (Date.now() < vercelPauseUntil) return;
@@ -462,6 +464,16 @@ function consider(campaignId) {
     if (!campaignId || !baselineReady || !reservationsReady || !liveIdsReady) return;
     if (alreadyOpen.has(campaignId) || claimed.has(campaignId) || unavailable.has(campaignId) || holdingFull.has(campaignId)) return;
     if (!liveIds.has(campaignId)) return;
+
+    if (config.monitorOnly) {
+        if (openIds.has(campaignId) && !notifiedActive.has(campaignId)) {
+            notifiedActive.add(campaignId);
+            showArmLabel('SPOT OPEN - MONITOR ONLY');
+            sendTelegram('<b>SPOT OPEN</b>\n\n<code>' + campaignId + '</code>\nCapacity detected. Monitor only; no save request was sent.');
+            log('open capacity detected for ' + campaignId + '; monitor-only mode');
+        }
+        return;
+    }
     if (Date.now() < vercelPauseUntil) return;
 
     const countdownVisible = windows.has(campaignId);
@@ -690,8 +702,6 @@ async function pollCapacity() {
         applyOpenSet(nextOpen);
         if (!baselineReady) takeBaseline(nextOpen);
         settle();
-        if (sessionPause || Date.now() < vercelPauseUntil) return;
-
         openIds.forEach(id => consider(id));
         recatchArmed.forEach(id => {
             if (!liveIds.has(id) || claimed.has(id) || holdingFull.has(id) || pursuing.has(id)) return;
@@ -996,6 +1006,7 @@ async function armLoop() {
 function snapshot() {
     return {
         version: '19.2.2-cloud',
+        mode: config.monitorOnly ? 'monitor-only' : 'automation',
         label: lastArmLabel || 'STARTING',
         live: liveIds.size,
         open: openIds.size,
@@ -1021,11 +1032,15 @@ async function boot() {
         pauseSaves('SET LOGIN');
         await alertOnce('need-login', '<b>SESSION DOWN</b>\n\nSet SG_SESSION_JSON, or set SG_USERNAME and SG_PASSWORD.');
     }
-    const found = await discoverBuild();
-    if (!store.actionId) store.actionId = config.defaultActionId;
-    if (!store.deploymentId) store.deploymentId = config.defaultDeploymentId;
-    if (found.blocked) log('site challenge on boot; session JSON still works for Supabase, saves pause only after a blocked POST');
-    persist();
+    if (!config.monitorOnly) {
+        const found = await discoverBuild();
+        if (!store.actionId) store.actionId = config.defaultActionId;
+        if (!store.deploymentId) store.deploymentId = config.defaultDeploymentId;
+        if (found.blocked) log('site challenge detected during build discovery');
+        persist();
+    } else {
+        log('monitor-only mode enabled; build discovery and save requests are disabled');
+    }
     await evaluateSession();
     await Promise.all([syncProfile(), syncLiveCampaigns(), syncReservations()]);
     await pollCapacity();
