@@ -142,8 +142,11 @@ process.on('unhandledRejection', error => {
 });
 
 engine.boot()
-    .then(() => engine.start())
-    .catch(error => {
-        log(`boot failed: ${error.message}`);
+    .then(() => {
         engine.start();
+        log('engine started');
+    })
+    .catch(error => {
+        // Do not start polling or saving with a partially initialized browser/session.
+        log(`engine boot failed; worker remains stopped: ${error.message}`);
     });
