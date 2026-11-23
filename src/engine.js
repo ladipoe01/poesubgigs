@@ -67,7 +67,6 @@ let stopped = false;
 let loopsStarted = false;
 let minimalLogged = false;
 const supabaseWarned = new Set();
-const notifiedActive = new Set();
 
 function isCampaignId(id) {
     return typeof id === 'string' && ID_RE.test(id);
