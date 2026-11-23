@@ -1051,4 +1051,18 @@ function busy() {
     return saveInflight.size > 0 || pursuing.size > 0 || authBusy;
 }
 
-export const engine = { boot, start, stop, busy, snapshot };
+
+async function runDummySaveTest() {
+    if (process.env.SG_DUMMY_SAVE_TEST !== 'true') return;
+    const campaignId = '00000000-0000-4000-8000-000000000404';
+    log(`DUMMY SAVE TEST starting campaign=${campaignId}`);
+    try {
+        const response = await submitCampaign(campaignId, currentAction(), routerTree(), currentDeployment());
+        const body = await response.text();
+        log(`DUMMY SAVE TEST result HTTP ${response.status} url=${response.url} body=${replyClip(body) || 'empty reply'}`);
+    } catch (error) {
+        log(`DUMMY SAVE TEST failed: ${error.message}`);
+    }
+}
+
+export const engine = { boot, start, stop, busy, snapshot, runDummySaveTest };
