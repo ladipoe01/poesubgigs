@@ -45,11 +45,6 @@ export const config = {
     siteOrigin: text('SITE_ORIGIN', 'https://subsgigs-alpha.vercel.app').replace(/\/+$/, ''),
     supabaseUrl: text('SUPABASE_URL', 'https://kemvnhqbfaztwyhcerqh.supabase.co').replace(/\/+$/, ''),
     supabaseKey: text('SUPABASE_ANON_KEY', 'sb_publishable_p1bpyo6pXEiVtXTVso4W_A_XYfLmOqv'),
-    sessionJson: text('SG_SESSION_JSON', ''),
-    sessionForce: flag('SG_SESSION_FORCE', false),
-    accessToken: text('SG_ACCESS_TOKEN', ''),
-    refreshToken: text('SG_REFRESH_TOKEN', ''),
-    expiresAt: num('SG_EXPIRES_AT', 0),
     username: text('SG_USERNAME', '').replace(/^@/, ''),
     password: text('SG_PASSWORD', ''),
     telegram: {
