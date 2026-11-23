@@ -993,20 +993,6 @@ async function armLoop() {
     }
 }
 
-export async function runDummySaveTest() {
-    const campaignId = '00000000-0000-4000-8000-000000000404';
-    log(`DUMMY SAVE TEST starting campaign=${campaignId}`);
-    try {
-        const started = performance.now();
-        const response = await submitCampaign(campaignId, currentAction(), routerTree(), currentDeployment());
-        const body = await response.text();
-        const elapsed = Math.round(performance.now() - started);
-        log(`DUMMY SAVE TEST result HTTP ${response.status} elapsed=${elapsed}ms url=${response.url || 'unknown'} body=${replyClip(body) || 'empty reply'}`);
-    } catch (error) {
-        log(`DUMMY SAVE TEST failed: ${error.message}`);
-    }
-}
-
 function snapshot() {
     return {
         version: '19.2.2-cloud',
