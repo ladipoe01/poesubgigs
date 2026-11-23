@@ -3,7 +3,7 @@ import { clock } from './clock.js';
 import { log } from './log.js';
 import { alertOnce, sendTelegram } from './telegram.js';
 import { discoverBuild } from './discover.js';
-import { startPersistentBrowser, submitCampaign } from './browser.js';
+import { startPersistentBrowser, submitCampaign, loginWithBrowser } from './browser.js';
 import {
     absorbCookies,
     accessToken,
@@ -67,6 +67,7 @@ let stopped = false;
 let loopsStarted = false;
 let minimalLogged = false;
 const supabaseWarned = new Set();
+const notifiedActive = new Set();
 
 function isCampaignId(id) {
     return typeof id === 'string' && ID_RE.test(id);
