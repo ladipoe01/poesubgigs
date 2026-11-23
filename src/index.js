@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
-import { engine } from './engine.js';
+import { engine, runDummySaveTest } from './engine.js';
 import { closePersistentBrowser } from './browser.js';
 import { applySession, coerceSession } from './session.js';
 import { log } from './log.js';
@@ -122,7 +122,7 @@ process.on('unhandledRejection', error => {
 });
 
 engine.boot()
-    .then(() => engine.start())
+    .then(async () => {\n        if (process.env.SG_DUMMY_SAVE_TEST === 'true') await runDummySaveTest();\n        engine.start();\n    })
     .catch(error => {
         log(`boot failed: ${error.message}`);
         engine.start();
