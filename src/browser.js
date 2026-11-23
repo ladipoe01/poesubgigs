@@ -70,55 +70,14 @@ export async function startPersistentBrowser() {
     }
 }
 
-export async function submitCampaign(campaignId, actionId, routerTree, deploymentId) {
-    await startPersistentBrowser();
-    await seedAuthCookies();
-
-    const currentHtml = await page.content().catch(() => '');
-    if (checkpointPattern.test(currentHtml)) {
-        return responseLike({
-            status: 403,
-            url: page.url(),
-            headers: [],
-            body: 'Vercel security checkpoint detected. The worker will not attempt to bypass it.'
-        });
-    }
-
-    const result = await page.evaluate(async ({ campaignId, actionId, routerTree, deploymentId }) => {
-        const body = new FormData();
-        body.append('_1_campaignId', String(campaignId));
-        body.append('0', '[{},"$K1"]');
-        try {
-            const response = await fetch('/campaigns', {
-                method: 'POST',
-                body,
-                credentials: 'include',
-                cache: 'no-store',
-                redirect: 'follow',
-                headers: {
-                    Accept: 'text/x-component',
-                    'next-action': actionId,
-                    'next-router-state-tree': routerTree,
-                    'x-deployment-id': deploymentId
-                }
-            });
-            return {
-                status: response.status,
-                url: response.url,
-                headers: [...response.headers.entries()],
-                body: await response.text()
-            };
-        } catch (error) {
-            return { status: 0, url: location.href, headers: [], body: String(error?.message || error) };
-        }
-    }, { campaignId, actionId, routerTree, deploymentId });
-
-    if (result.status === 403 || result.status === 429 || checkpointPattern.test(result.body || '')) {
-        log('browser submission received a checkpoint or rate limit response');
-    }
-    return responseLike(result);
+export async function submitCampaign(campaignId) {
+    return responseLike({
+        status: 501,
+        url: page?.url() || config.siteOrigin,
+        headers: [],
+        body: 'Save requests are disabled in this monitor-only build.'
+    });
 }
-
 export async function closePersistentBrowser() {
     if (!context) return;
     const active = context;
