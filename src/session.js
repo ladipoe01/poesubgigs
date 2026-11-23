@@ -150,12 +150,6 @@ export function loadState() {
     } catch {
         fromFile = null;
     }
-    const fromEnv = coerceSession(config.sessionJson);
-    if (config.sessionForce && fromEnv) {
-        applySession(fromEnv);
-        log('session loaded from SG_SESSION_JSON');
-        return;
-    }
     if (fromFile?.session?.refresh_token || fromFile?.session?.access_token) {
         store.actionId = fromFile.actionId || store.actionId;
         store.deploymentId = fromFile.deploymentId || store.deploymentId;
@@ -165,20 +159,6 @@ export function loadState() {
         applySession(fromFile.session, { persist: false });
         log('session loaded from state file');
         return;
-    }
-    if (fromEnv) {
-        applySession(fromEnv);
-        log('session loaded from SG_SESSION_JSON');
-        return;
-    }
-    if (config.refreshToken) {
-        applySession({
-            access_token: config.accessToken,
-            refresh_token: config.refreshToken,
-            expires_at: config.expiresAt || undefined,
-            token_type: 'bearer'
-        });
-        log('session loaded from SG_REFRESH_TOKEN');
     }
 }
 
