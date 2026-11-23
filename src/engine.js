@@ -7,6 +7,7 @@ import { captureBrowserScreenshot, getBrowserDiagnostics, startPersistentBrowser
 import {
     absorbCookies,
     accessToken,
+    cookieHeader,
     expiryLeft,
     ingestAuthCookie,
     isCheckpoint,
