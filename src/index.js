@@ -1,5 +1,4 @@
 import http from 'node:http';
-import fs from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { engine } from './engine.js';
@@ -8,7 +7,6 @@ import { applySession, coerceSession } from './session.js';
 import { log } from './log.js';
 
 const transferToken = process.env.SG_TRANSFER_TOKEN || '';
-const transferUsedPath = `${config.statePath}.transfer-used`;
 
 function send(res, status, body, origin = '') {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
@@ -44,7 +42,6 @@ const server = http.createServer((req, res) => {
 
     if (path === '/session-transfer' && req.method === 'POST') {
         if (!transferToken || origin !== config.siteOrigin) return send(res, 403, { ok: false }, origin);
-        if (fs.existsSync(transferUsedPath)) return send(res, 410, { ok: false, error: 'transfer already used' }, origin);
 
         let raw = '';
         req.on('data', chunk => {
@@ -64,8 +61,6 @@ const server = http.createServer((req, res) => {
             if (!session?.refresh_token) return send(res, 400, { ok: false, error: 'valid refresh session required' }, origin);
 
             try {
-                fs.mkdirSync(new URL('.', `file://${config.statePath}`).pathname, { recursive: true });
-                fs.writeFileSync(transferUsedPath, new Date().toISOString(), { flag: 'wx', mode: 0o600 });
                 applySession(session);
                 log('one-time browser session transfer accepted');
                 send(res, 200, { ok: true }, origin);
