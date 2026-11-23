@@ -41,6 +41,15 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify(engine.snapshot()));
         return;
     }
+    if (path === '/debug') {
+        res.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+        });
+        res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>SubsGigs browser view</title><style>body{font:16px system-ui;max-width:760px;margin:32px auto;padding:0 16px;background:#111;color:#eee}input,button{font:inherit;padding:12px;border-radius:8px;border:1px solid #555}input{width:100%;box-sizing:border-box;background:#222;color:#fff;margin:10px 0}button{background:#eee;color:#111}img{display:block;width:100%;margin-top:20px;border:1px solid #555}#msg{color:#bbb}</style></head><body><h2>SubsGigs browser view</h2><p>Enter your Railway STATUS_TOKEN to view the current browser page.</p><input id="token" type="password" autocomplete="off" placeholder="STATUS_TOKEN"><button id="view">View current page</button><p id="msg"></p><img id="shot" alt="Current Railway browser screenshot" hidden><script>const btn=document.getElementById('view'),msg=document.getElementById('msg'),img=document.getElementById('shot');btn.onclick=async()=>{msg.textContent='Capturing…';img.hidden=true;try{const r=await fetch('/debug/screenshot',{headers:{Authorization:'Bearer '+document.getElementById('token').value},cache:'no-store'});if(!r.ok)throw new Error(r.status===404?'Access denied. Check STATUS_TOKEN.':'Screenshot unavailable ('+r.status+')');const u=URL.createObjectURL(await r.blob());if(img.dataset.url)URL.revokeObjectURL(img.dataset.url);img.dataset.url=u;img.src=u;img.hidden=false;msg.textContent='Updated';}catch(e){msg.textContent=e.message;}};</script></body></html>`);
+        return;
+    }
     if (path === '/debug/screenshot') {
         if (req.method !== 'GET' || !config.statusToken || !safeEqual(req.headers.authorization || '', `Bearer ${config.statusToken}`)) {
             res.writeHead(404, { 'Cache-Control': 'no-store' });
