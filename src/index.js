@@ -122,7 +122,10 @@ process.on('unhandledRejection', error => {
 });
 
 engine.boot()
-    .then(async () => {\n        if (process.env.SG_DUMMY_SAVE_TEST === 'true') await runDummySaveTest();\n        engine.start();\n    })
+    .then(async () => {
+        if (process.env.SG_DUMMY_SAVE_TEST === 'true') await runDummySaveTest();
+        engine.start();
+    })
     .catch(error => {
         log(`boot failed: ${error.message}`);
         engine.start();
