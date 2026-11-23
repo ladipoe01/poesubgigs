@@ -138,6 +138,12 @@ export async function loginWithBrowser(force = false) {
     }
 }
 
+export async function captureBrowserScreenshot() {
+    if (!page) await startPersistentBrowser();
+    if (!page) throw new Error('Persistent browser page is unavailable');
+    return page.screenshot({ type: 'png', fullPage: false, animations: 'disabled' });
+}
+
 export async function submitCampaign(campaignId) {
     return {
         status: 501,
