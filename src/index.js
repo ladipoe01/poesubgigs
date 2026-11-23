@@ -95,7 +95,7 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     if (path === '/status') {
-        if (!config.statusToken || !safeEqual(req.headers.authorization || '', `Bearer ${config.statusToken}`) {
+        if (!config.statusToken || !safeEqual(req.headers.authorization || '', `Bearer ${config.statusToken}`)) {
             res.writeHead(404);
             res.end();
             return;
