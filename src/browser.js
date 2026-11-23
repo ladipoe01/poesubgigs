@@ -6,6 +6,8 @@ import { log } from './log.js';
 let context;
 let page;
 let starting;
+let lastNavigationStatus = 0;
+let checkpointDetected = false;
 
 const checkpointPattern = /security checkpoint|verify you are human|checking your browser|vercel security|challenge-platform/i;
 
@@ -52,9 +54,13 @@ export async function startPersistentBrowser() {
                 waitUntil: 'domcontentloaded',
                 timeout: 20000
             });
+            lastNavigationStatus = response?.status() || 0;
             const html = await page.content().catch(() => '');
-            if (response?.status() === 429 || checkpointPattern.test(html)) {
-                log('Vercel checkpoint detected in persistent browser; saves will pause until the site allows access');
+            checkpointDetected = lastNavigationStatus === 403 || checkpointPattern.test(html);
+            if (checkpointDetected) {
+                log(`site access checkpoint detected during page navigation (HTTP ${lastNavigationStatus || 'unknown'}); automation must remain paused`);
+            } else if (lastNavigationStatus === 429) {
+                log('site rate limit detected during page navigation; automation must remain paused');
             } else {
                 log('persistent browser profile ready');
             }
@@ -70,12 +76,26 @@ export async function startPersistentBrowser() {
     }
 }
 
+export async function getBrowserDiagnostics() {
+    if (!page || page.isClosed()) return { ready: false, url: '', title: '', httpStatus: lastNavigationStatus, checkpoint: checkpointDetected };
+    const title = await page.title().catch(() => '');
+    const html = await page.content().catch(() => '');
+    const checkpoint = checkpointDetected || lastNavigationStatus === 403 || checkpointPattern.test(html);
+    checkpointDetected = checkpoint;
+    return { ready: true, url: page.url(), title, httpStatus: lastNavigationStatus, checkpoint };
+}
+
+export async function captureBrowserScreenshot() {
+    if (!page || page.isClosed()) throw new Error('Browser page is not available');
+    return page.screenshot({ type: 'png', fullPage: false, animations: 'disabled' });
+}
+
 export async function submitCampaign(campaignId, actionId, routerTree, deploymentId) {
     await startPersistentBrowser();
     await seedAuthCookies();
 
     const currentHtml = await page.content().catch(() => '');
-    if (checkpointPattern.test(currentHtml)) {
+    if (checkpointDetected || lastNavigationStatus === 403 || checkpointPattern.test(currentHtml)) {
         return responseLike({
             status: 403,
             url: page.url(),
@@ -113,8 +133,11 @@ export async function submitCampaign(campaignId, actionId, routerTree, deploymen
         }
     }, { campaignId, actionId, routerTree, deploymentId });
 
-    if (result.status === 403 || result.status === 429 || checkpointPattern.test(result.body || '')) {
-        log('browser submission received a checkpoint or rate limit response');
+    if (result.status === 403 || checkpointPattern.test(result.body || '')) {
+        checkpointDetected = true;
+        log('browser submission received HTTP 403 or a checkpoint response; future saves are blocked');
+    } else if (result.status === 429) {
+        log('browser submission received HTTP 429 rate limit');
     }
     return responseLike(result);
 }
