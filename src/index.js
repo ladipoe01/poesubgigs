@@ -3,10 +3,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { engine } from './engine.js';
 import { closePersistentBrowser } from './browser.js';
-import { applySession, coerceSession } from './session.js';
 import { log } from './log.js';
 
-const transferToken = process.env.SG_TRANSFER_TOKEN || '';
 
 function send(res, status, body, origin = '') {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
@@ -27,51 +25,6 @@ function safeEqual(a, b) {
 const server = http.createServer((req, res) => {
     const path = (req.url || '/').split('?')[0];
     const origin = req.headers.origin || '';
-
-    if (path === '/session-transfer' && req.method === 'OPTIONS') {
-        if (origin !== config.siteOrigin) return send(res, 403, { ok: false });
-        res.writeHead(204, {
-            'Access-Control-Allow-Origin': config.siteOrigin,
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Max-Age': '300',
-            'Vary': 'Origin'
-        });
-        return res.end();
-    }
-
-    if (path === '/session-transfer' && req.method === 'POST') {
-        if (!transferToken || origin !== config.siteOrigin) return send(res, 403, { ok: false }, origin);
-
-        let raw = '';
-        req.on('data', chunk => {
-            raw += chunk;
-            if (raw.length > 65536) {
-                send(res, 413, { ok: false }, origin);
-                req.destroy();
-            }
-        });
-        req.on('end', () => {
-            let payload;
-            try { payload = JSON.parse(raw); } catch { return send(res, 400, { ok: false }, origin); }
-            if (!safeEqual(payload?.transferToken || '', transferToken)) {
-                return send(res, 403, { ok: false }, origin);
-            }
-            const session = coerceSession(payload?.session?.currentSession || payload?.session);
-            if (!session?.refresh_token) return send(res, 400, { ok: false, error: 'valid refresh session required' }, origin);
-
-            try {
-                applySession(session);
-                log('one-time browser session transfer accepted');
-                send(res, 200, { ok: true }, origin);
-                log('session transfer stored; no test save will be sent automatically');
-                return;
-            } catch (error) {
-                return send(res, 500, { ok: false, error: 'could not persist transferred session' }, origin);
-            }
-        });
-        return;
-    }
 
     if (path === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
