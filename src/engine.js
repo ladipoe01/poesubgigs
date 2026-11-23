@@ -818,8 +818,14 @@ function hasImminentWindow() {
 }
 
 async function goLogin() {
-    pauseSaves('SESSION REQUIRED');
-    await alertOnce('session-transfer-needed', '<b>SESSION REQUIRED</b>\n\nLog in through Safari and transfer your browser session. Automatic login is disabled.');
+    pauseSaves('LOGIN REQUIRED');
+    const login = await loginWithBrowser(true);
+    if (login.ok) {
+        sessionPause = false;
+        showArmLabel('LOGIN SUCCESSFUL');
+        return;
+    }
+    await alertOnce('session-login-needed', '<b>LOGIN REQUIRED</b>\\n\\nCheck SG_USERNAME and SG_PASSWORD in Railway variables.');
 }
 
 async function scheduleRotate() {
@@ -841,9 +847,17 @@ async function scheduleRotate() {
         store.rotateUntil = Date.now() + 60 * 1000;
         persist();
         pauseSaves('SESSION REFRESH NEEDED');
+        const login = await loginWithBrowser(true);
+        if (login.ok) {
+            store.rotateFails = 0;
+            store.rotateUntil = Date.now() + 20 * 60 * 1000;
+            sessionPause = false;
+            showArmLabel('LOGIN SUCCESSFUL');
+            return;
+        }
         if (store.rotateFails === 1 || store.rotateFails % 5 === 0) {
-            log('stored session refresh failed; waiting for a fresh browser session transfer');
-            await alertOnce('session-refresh-needed', '<b>SESSION REFRESH NEEDED</b>\n\nThe saved browser session could not be refreshed. Log in through Safari and transfer the session again. Automatic login is disabled.');
+            log(`automatic browser login not completed: ${login.reason}`);
+            await alertOnce('session-login-needed', '<b>LOGIN REQUIRED</b>\\n\\nCheck SG_USERNAME and SG_PASSWORD in Railway variables. The bot will not bypass security checkpoints.');
         }
     } finally {
         authBusy = false;
@@ -869,8 +883,15 @@ async function evaluateSession() {
         await scheduleRotate();
         return;
     }
-    pauseSaves('SESSION REQUIRED');
-    await alertOnce('session-transfer-needed', '<b>SESSION REQUIRED</b>\n\nLog in through Safari and transfer your browser session. Automatic login is disabled.');
+    pauseSaves('LOGIN REQUIRED');
+    const login = await loginWithBrowser(true);
+    if (login.ok) {
+        sessionPause = false;
+        store.loginFails = 0;
+        showArmLabel('LOGIN SUCCESSFUL');
+        return;
+    }
+    await alertOnce('session-login-needed', '<b>LOGIN REQUIRED</b>\\n\\nCheck SG_USERNAME and SG_PASSWORD in Railway variables.');
 }
 
 function formatLeft(ms) {
@@ -1029,9 +1050,14 @@ async function boot() {
     loadState();
     await startPersistentBrowser();
     log(`SubsGigs cloud v19.2.2 poll=${config.fastPollMs}ms dryRun=${config.dryRun} baseline=${config.baseline}`);
+    if (!store.session || expiryLeft() <= 0) {
+        log('no valid browser auth state; attempting automatic login');
+        const login = await loginWithBrowser(true);
+        if (!login.ok) log(`automatic login not completed: ${login.reason}`);
+    }
     if (!store.session) {
-        pauseSaves('SET LOGIN');
-        await alertOnce('need-login', '<b>SESSION DOWN</b>\n\nSet SG_SESSION_JSON, or set SG_USERNAME and SG_PASSWORD.');
+        pauseSaves('LOGIN REQUIRED');
+        await alertOnce('need-login', '<b>LOGIN REQUIRED</b>\\n\\nSet SG_USERNAME and SG_PASSWORD in Railway variables.');
     }
     if (!config.monitorOnly) {
         const found = await discoverBuild();
