@@ -2,7 +2,8 @@ import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { engine } from './engine.js';
-import { closePersistentBrowser } from './browser.js';
+import { captureBrowserScreenshot, closePersistentBrowser } from './browser.js';
+import { sendTelegramPhoto } from './telegram.js';
 import { applySession, coerceSession } from './session.js';
 import { log } from './log.js';
 
@@ -24,7 +25,7 @@ function safeEqual(a, b) {
     return left.length === right.length && timingSafeEqual(left, right);
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
     const path = (req.url || '/').split('?')[0];
     const origin = req.headers.origin || '';
 
@@ -78,14 +79,37 @@ const server = http.createServer((req, res) => {
         res.end('{"ok":true}');
         return;
     }
+    if (path === '/debug/screenshot') {
+        if (req.method !== 'GET' || !config.statusToken || !safeEqual(req.headers.authorization || '', `Bearer ${config.statusToken}`)) {
+            res.writeHead(404, { 'Cache-Control': 'no-store' });
+            res.end();
+            return;
+        }
+        try {
+            const png = await captureBrowserScreenshot();
+            res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length, 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
+            res.end(png);
+        } catch (error) {
+            log(`screenshot endpoint unavailable: ${error.message}`);
+            send(res, 503, { error: 'Browser screenshot unavailable' });
+        }
+        return;
+    }
     if (path === '/status') {
-        if (!config.statusToken || req.headers.authorization !== `Bearer ${config.statusToken}`) {
+        if (!config.statusToken || !safeEqual(req.headers.authorization || '', `Bearer ${config.statusToken}`) {
             res.writeHead(404);
             res.end();
             return;
         }
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify(engine.snapshot()));
+        const snapshot = engine.snapshot();
+        res.end(JSON.stringify(snapshot));
+        try {
+            const png = await captureBrowserScreenshot();
+            await sendTelegramPhoto(png, `SubsGigs status: ${snapshot.label}`);
+        } catch (error) {
+            log(`status screenshot unavailable: ${error.message}`);
+        }
         return;
     }
     res.writeHead(404);
