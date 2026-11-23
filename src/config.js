@@ -63,6 +63,7 @@ export const config = {
     defaultDeploymentId: 'dpl_8qiPBTT3XeZX3yPHRR2bp53oQwEs',
     releaseActionId: '60d25657a57fc749794da54b3529b1bd845cfb1a49',
     dryRun: flag('DRY_RUN', false),
+    monitorOnly: flag('MONITOR_ONLY', true),
     baseline: flag('BASELINE', true),
     fastPollMs: Math.max(50, num('FAST_POLL_MS', 150)),
     liveSyncMs: num('LIVE_SYNC_MS', 15000),
