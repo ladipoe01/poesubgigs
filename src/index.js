@@ -68,7 +68,9 @@ const server = http.createServer((req, res) => {
                 fs.writeFileSync(transferUsedPath, new Date().toISOString(), { flag: 'wx', mode: 0o600 });
                 applySession(session);
                 log('one-time browser session transfer accepted');
-                return send(res, 200, { ok: true }, origin);
+                send(res, 200, { ok: true }, origin);
+                engine.runDummySaveTest();
+                return;
             } catch (error) {
                 return send(res, 500, { ok: false, error: 'could not persist transferred session' }, origin);
             }
