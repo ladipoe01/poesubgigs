@@ -1,9 +1,9 @@
 import { config } from './config.js';
 import { clock } from './clock.js';
 import { log } from './log.js';
-import { alertOnce, sendTelegram } from './telegram.js';
+import { alertOnce, sendTelegram, sendTelegramPhoto } from './telegram.js';
 import { discoverBuild } from './discover.js';
-import { startPersistentBrowser, submitCampaign } from './browser.js';
+import { captureBrowserScreenshot, getBrowserDiagnostics, startPersistentBrowser, submitCampaign } from './browser.js';
 import {
     absorbCookies,
     accessToken,
@@ -61,6 +61,8 @@ let verifyRunning = 0;
 let vercelPauseUntil = 0;
 let vercelBackoffMs = config.vercelWaitMs;
 let vercelTold = false;
+let checkpointPause = false;
+let checkpointTold = false;
 let rateTimer = 0;
 let reservationSyncing = false;
 let stopped = false;
@@ -242,6 +244,26 @@ function replyClip(text) {
     return String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
 
+async function notifyBrowserScreenshot(caption) {
+    try {
+        const png = await captureBrowserScreenshot();
+        await sendTelegramPhoto(png, caption);
+    } catch (error) {
+        log(`screenshot report unavailable: ${error.message}`);
+    }
+}
+
+async function pauseForCheckpoint(reason) {
+    checkpointPause = true;
+    needRateRetry.clear();
+    showArmLabel('VERCEL CHECKPOINT');
+    if (!checkpointTold) {
+        checkpointTold = true;
+        await sendTelegram(`<b>ACCESS CHECKPOINT</b>\n\n${reason}\n\nAutomation and campaign saves are paused. Complete any required access step through the normal site/browser flow, then restart the worker after access is restored.`);
+        await notifyBrowserScreenshot('SubsGigs access checkpoint detected');
+    }
+}
+
 function noteVercelLimit() {
     if (Date.now() < vercelPauseUntil) return;
     const wait = vercelBackoffMs;
@@ -326,6 +348,7 @@ function finishSaved(campaignId) {
 
 async function saveOnce(campaignId) {
     if (!isCampaignId(campaignId)) return 'full';
+    if (checkpointPause) return 'checkpoint';
     if (sessionPause || publicWait(campaignId)) return 'wait';
     if (Date.now() < vercelPauseUntil) return 'wait';
     if (claimed.has(campaignId) || unavailable.has(campaignId) || holdingFull.has(campaignId)) return 'full';
@@ -367,7 +390,11 @@ async function saveOnce(campaignId) {
         const text = await posted.text();
         const lower = text.toLowerCase();
 
-        if (posted.status === 429 || posted.status === 502 || posted.status === 503 || isCheckpoint(text) || /security checkpoint|too many requests/i.test(lower)) {
+        if (posted.status === 403 || isCheckpoint(text) || /security checkpoint|verify you are human|challenge-platform/i.test(lower)) {
+            await pauseForCheckpoint(`The campaign request was blocked (HTTP ${posted.status}).`);
+            return 'checkpoint';
+        }
+        if (posted.status === 429 || posted.status === 502 || posted.status === 503 || /too many requests/i.test(lower)) {
             noteVercelLimit();
             return 'rate';
         }
@@ -395,6 +422,7 @@ async function saveOnce(campaignId) {
         const before = await beforePromise;
         if (savedText(posted, text) || await countDropped(campaignId, before)) {
             finishSaved(campaignId);
+            await notifyBrowserScreenshot(`Save result for campaign ${campaignId}`);
             return 'saved';
         }
 
@@ -690,7 +718,7 @@ async function pollCapacity() {
         applyOpenSet(nextOpen);
         if (!baselineReady) takeBaseline(nextOpen);
         settle();
-        if (sessionPause || Date.now() < vercelPauseUntil) return;
+        if (checkpointPause || sessionPause || Date.now() < vercelPauseUntil) return;
 
         openIds.forEach(id => consider(id));
         recatchArmed.forEach(id => {
@@ -874,6 +902,10 @@ function formatLeft(ms) {
 function armTick() {
     settle();
     releaseExpiredHolds();
+    if (checkpointPause) {
+        showArmLabel('VERCEL CHECKPOINT');
+        return 1000;
+    }
     const now = clock.now();
     let soonest = null;
     let waitingSpot = false;
@@ -1005,7 +1037,8 @@ function snapshot() {
         leadMs: clock.armLead(),
         clockOffsetMs: clock.calibrated ? Math.round(clock.offsetMs) : null,
         session: formatLeft(expiryLeft()),
-        paused: sessionPause,
+        paused: sessionPause || checkpointPause,
+        checkpoint: checkpointPause,
         dryRun: config.dryRun,
         vercelPauseMs: Math.max(0, vercelPauseUntil - Date.now()),
         actionKnown: Boolean(store.actionId || config.defaultActionId),
@@ -1016,6 +1049,8 @@ function snapshot() {
 async function boot() {
     loadState();
     await startPersistentBrowser();
+    const browserState = await getBrowserDiagnostics();
+    if (browserState.checkpoint) await pauseForCheckpoint(`Initial page navigation was blocked (HTTP ${browserState.httpStatus || 'unknown'}).`);
     log(`SubsGigs cloud v19.2.2 poll=${config.fastPollMs}ms dryRun=${config.dryRun} baseline=${config.baseline}`);
     if (!store.session) {
         pauseSaves('SET LOGIN');
@@ -1024,7 +1059,7 @@ async function boot() {
     const found = await discoverBuild();
     if (!store.actionId) store.actionId = config.defaultActionId;
     if (!store.deploymentId) store.deploymentId = config.defaultDeploymentId;
-    if (found.blocked) log('site challenge on boot; session JSON still works for Supabase, saves pause only after a blocked POST');
+    if (found.blocked) await pauseForCheckpoint('The site challenge was also detected during build discovery.');
     persist();
     await evaluateSession();
     await Promise.all([syncProfile(), syncLiveCampaigns(), syncReservations()]);
