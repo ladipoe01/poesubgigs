@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { log } from './log.js';
 
 const jar = new Map();
+let refreshInFlight = null;
 
 export const store = {
     session: null,
@@ -65,6 +66,10 @@ export function chunkCookie(name, value) {
 
 export function coerceSession(input) {
     if (!input) return null;
+    if (typeof input === 'object') {
+        const session = input.currentSession || input;
+        return session && typeof session === 'object' && (session.access_token || session.refresh_token) ? session : null;
+    }
     let raw = String(input).trim();
     if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
         try { raw = JSON.parse(raw); } catch { raw = raw.slice(1, -1); }
@@ -77,7 +82,8 @@ export function coerceSession(input) {
     if (!raw.startsWith('{')) return null;
     try {
         const session = JSON.parse(raw);
-        return session && (session.access_token || session.refresh_token) ? session : null;
+        const value = session?.currentSession || session;
+        return value && (value.access_token || value.refresh_token) ? value : null;
     } catch {
         return null;
     }
@@ -102,7 +108,7 @@ function sessionFromJar() {
 export function persist() {
     try {
         fs.mkdirSync(path.dirname(config.statePath), { recursive: true });
-        const tmp = `${config.statePath}.tmp`;
+        const tmp = `${config.statePath}.${process.pid}.${Date.now()}.tmp`;
         fs.writeFileSync(tmp, JSON.stringify({
             session: store.session,
             actionId: store.actionId,
@@ -110,13 +116,13 @@ export function persist() {
             routerTree: store.routerTree,
             loginFails: store.loginFails,
             rotateFails: store.rotateFails
-        }));
+        }), { mode: 0o600 });
         try {
-            if (fs.existsSync(config.statePath)) fs.rmSync(config.statePath, { force: true });
+            // Rename replaces the previous file atomically on the Railway Linux volume.
             fs.renameSync(tmp, config.statePath);
-        } catch {
-            fs.copyFileSync(tmp, config.statePath);
+        } catch (error) {
             fs.rmSync(tmp, { force: true });
+            throw error;
         }
         store.persistError = '';
     } catch (error) {
@@ -233,37 +239,48 @@ export function ingestAuthCookie() {
 }
 
 export async function refreshSession() {
-    const session = store.session;
-    if (!session?.refresh_token) return false;
-    let response;
-    try {
-        response = await fetch(`${config.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                apikey: config.supabaseKey,
-                Authorization: `Bearer ${config.supabaseKey}`
-            },
-            body: JSON.stringify({ refresh_token: session.refresh_token }),
-            signal: AbortSignal.timeout(8000)
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = (async () => {
+        const session = store.session;
+        if (!session?.refresh_token) return false;
+        let response;
+        try {
+            response = await fetch(`${config.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    apikey: config.supabaseKey,
+                    Authorization: `Bearer ${config.supabaseKey}`
+                },
+                body: JSON.stringify({ refresh_token: session.refresh_token }),
+                signal: AbortSignal.timeout(8000)
+            });
+        } catch (error) {
+            log(`session refresh failed: ${error.message}`);
+            return false;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (response.status !== 200 || !data.access_token || !data.refresh_token) {
+            log(`session refresh rejected: HTTP ${response.status}`);
+            return false;
+        }
+        const expiresAt = data.expires_at || (data.expires_in ? Math.floor(Date.now() / 1000) + Number(data.expires_in) : session.expires_at);
+        applySession({
+            ...session,
+            access_token: data.access_token,
+            refresh_token: data.refresh_token,
+            expires_in: data.expires_in,
+            expires_at: expiresAt,
+            token_type: data.token_type || session.token_type || 'bearer',
+            user: data.user || session.user
         });
-    } catch (error) {
-        log(`session refresh failed: ${error.message}`);
-        return false;
+        return true;
+    })();
+    try {
+        return await refreshInFlight;
+    } finally {
+        refreshInFlight = null;
     }
-    const data = await response.json().catch(() => ({}));
-    if (response.status !== 200 || !data.access_token || !data.refresh_token) return false;
-    const expiresAt = data.expires_at || (data.expires_in ? Math.floor(Date.now() / 1000) + Number(data.expires_in) : session.expires_at);
-    applySession({
-        ...session,
-        access_token: data.access_token,
-        refresh_token: data.refresh_token,
-        expires_in: data.expires_in,
-        expires_at: expiresAt,
-        token_type: data.token_type || session.token_type || 'bearer',
-        user: data.user || session.user
-    });
-    return true;
 }
 
 function attr(tag, name) {

@@ -2,13 +2,14 @@
 
 One Railway process that does what userscript v19.2.2 did in the browser: watch live campaign capacity, wait out priority windows, and POST the Next.js save as soon as a spot can be taken.
 
-The browser HUD, chime, and Tampermonkey menu are gone. Alerts go to Telegram. The session lives in a Railway variable and is refreshed onto a volume.
+The browser HUD, chime, and Tampermonkey menu are gone. Alerts go to Telegram. Campaign submissions run in a headless Playwright browser with a persistent profile under `/data/profile`; the Supabase session state is stored at `/data/session.json`.
 
 ## What you need
 
 - A Railway account
 - One GitHub repo containing this folder
-- A logged-in SubsGigs session, or the site username and password
+- A logged-in SubsGigs session (recommended), or the site username and password
+- A Railway volume mounted at `/data`
 - A Telegram bot token and chat id, if you want alerts
 
 Run **one replica**. Two copies will both try to save the same spot.
@@ -55,20 +56,20 @@ Log in on the site in your own browser. Open the console and paste:
 
 That value is a secret. Put it only in Railway variables.
 
-The site rotates the refresh token. Mount a volume at `/data` so the new token survives a restart. `STATE_PATH` defaults to `/data/session.json` on Railway.
+The site rotates the refresh token. Mount a Railway volume at `/data` so the refreshed token and Playwright browser profile survive restarts. `STATE_PATH` defaults to `/data/session.json` and `BROWSER_PROFILE_PATH` defaults to `/data/profile` on Railway.
 
 `campaign_capacity` is readable with the publishable key. The live campaign list, profile, and your holds are not. Those need the session token. Until a session is loaded, the log stays on `SIGNED OUT` and `live=0`.
 
 If you later paste a fresh session, set `SG_SESSION_FORCE=true` for one deploy so the old file does not win. Then set it back to `false`.
 
-`SG_USERNAME` and `SG_PASSWORD` are the fallback when there is no session. Railway datacenter IPs often get Vercel's checkpoint page instead of the login form. When that happens the worker pauses and does not keep guessing the password. A pasted session avoids that login page.
+`SG_USERNAME` and `SG_PASSWORD` are the fallback when there is no session. Railway datacenter IPs may receive Vercel's checkpoint page instead of the login form. The persistent browser keeps cookies and browser state between restarts, but it does not bypass a security checkpoint. When a checkpoint is detected, the worker pauses rather than trying to evade verification. Use an approved access method or contact the site operator if the worker is consistently blocked.
 
 ## 2. Deploy
 
 1. Push this folder to GitHub.
 2. Railway: New Project, Deploy from GitHub, select the repo.
 3. Add a volume. Mount path: `/data`.
-4. Settings: replicas `1`, App Sleep off, region close to London.
+4. Settings: replicas `1`, App Sleep off, region close to London. Keep the volume mounted at `/data` on every deploy.
 5. Variables, from `.env.example`:
    - `SG_SESSION_JSON`
    - `TELEGRAM_BOT_TOKEN`
@@ -79,7 +80,7 @@ If you later paste a fresh session, set `SG_SESSION_FORCE=true` for one deploy s
 
 `/health` is public and only returns `{"ok":true}`. Set `STATUS_TOKEN` if you want `GET /status` with `Authorization: Bearer <token>`.
 
-The bot token in the old userscript was pasted into chat. Revoke it in BotFather and use a new one here.
+Do not commit `data/session.json`, `.env`, or browser profile files. The repository previously contained a session file; removing it from this branch does not erase it from Git history. Revoke the exposed session by signing out of SubsGigs or rotating the refresh token, then create a fresh session and store it only in Railway variables. Also revoke any Telegram bot token that was ever exposed and replace it.
 
 ## Behavior carried over
 

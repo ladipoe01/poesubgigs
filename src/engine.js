@@ -1,8 +1,9 @@
 import { config } from './config.js';
 import { clock } from './clock.js';
 import { log } from './log.js';
-import { alertOnce, sendTelegram } from './telegram.js';
+import { alertOnce, sendTelegram, sendTelegramPhoto } from './telegram.js';
 import { discoverBuild } from './discover.js';
+import { captureBrowserScreenshot, getBrowserDiagnostics, startPersistentBrowser, submitCampaign } from './browser.js';
 import {
     absorbCookies,
     accessToken,
@@ -11,7 +12,6 @@ import {
     ingestAuthCookie,
     isCheckpoint,
     loadState,
-    loginWithPassword,
     persist,
     refreshSession,
     store,
@@ -62,6 +62,8 @@ let verifyRunning = 0;
 let vercelPauseUntil = 0;
 let vercelBackoffMs = config.vercelWaitMs;
 let vercelTold = false;
+let checkpointPause = false;
+let checkpointTold = false;
 let rateTimer = 0;
 let reservationSyncing = false;
 let stopped = false;
@@ -230,13 +232,6 @@ function currentDeployment() {
     return store.deploymentId || config.defaultDeploymentId;
 }
 
-function buildPacket(campaignId) {
-    const body = new FormData();
-    body.append('_1_campaignId', String(campaignId));
-    body.append('0', '[{},"$K1"]');
-    return body;
-}
-
 function savedText(response, text) {
     if (!response) return false;
     if (/"success"\s*:\s*"Spot saved/i.test(text || '')) return true;
@@ -248,6 +243,26 @@ function savedText(response, text) {
 
 function replyClip(text) {
     return String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+async function notifyBrowserScreenshot(caption) {
+    try {
+        const png = await captureBrowserScreenshot();
+        await sendTelegramPhoto(png, caption);
+    } catch (error) {
+        log(`screenshot report unavailable: ${error.message}`);
+    }
+}
+
+async function pauseForCheckpoint(reason) {
+    checkpointPause = true;
+    needRateRetry.clear();
+    showArmLabel('VERCEL CHECKPOINT');
+    if (!checkpointTold) {
+        checkpointTold = true;
+        await sendTelegram(`<b>ACCESS CHECKPOINT</b>\n\n${reason}\n\nAutomation and campaign saves are paused. Complete any required access step through the normal site/browser flow, then restart the worker after access is restored.`);
+        await notifyBrowserScreenshot('SubsGigs access checkpoint detected');
+    }
 }
 
 function noteVercelLimit() {
@@ -334,6 +349,7 @@ function finishSaved(campaignId) {
 
 async function saveOnce(campaignId) {
     if (!isCampaignId(campaignId)) return 'full';
+    if (checkpointPause) return 'checkpoint';
     if (sessionPause || publicWait(campaignId)) return 'wait';
     if (Date.now() < vercelPauseUntil) return 'wait';
     if (claimed.has(campaignId) || unavailable.has(campaignId) || holdingFull.has(campaignId)) return 'full';
@@ -353,7 +369,6 @@ async function saveOnce(campaignId) {
     }
 
     const beforePromise = spotsLeft(campaignId);
-    const body = buildPacket(campaignId);
     saveInflight.add(campaignId);
     recordPostLedger(campaignId);
     const started = performance.now();
@@ -361,26 +376,7 @@ async function saveOnce(campaignId) {
     showArmLabel('SAVE SENT');
 
     try {
-        const headers = {
-            Accept: 'text/x-component',
-            'next-action': currentAction(),
-            'next-router-state-tree': routerTree(),
-            'x-deployment-id': currentDeployment(),
-            Origin: config.siteOrigin,
-            Referer: `${config.siteOrigin}/campaigns`,
-            'User-Agent': config.userAgent
-        };
-        const cookie = cookieHeader();
-        if (cookie) headers.Cookie = cookie;
-        const posted = await fetch(`${config.siteOrigin}/campaigns`, {
-            method: 'POST',
-            body,
-            headers,
-            redirect: 'follow',
-            cache: 'no-store',
-            keepalive: true,
-            signal: AbortSignal.timeout(15000)
-        });
+        const posted = await submitCampaign(campaignId, currentAction(), routerTree(), currentDeployment());
         const rtt = performance.now() - started;
         clock.update(posted, started);
         clock.recordFlight(rtt);
@@ -395,7 +391,11 @@ async function saveOnce(campaignId) {
         const text = await posted.text();
         const lower = text.toLowerCase();
 
-        if (posted.status === 429 || posted.status === 502 || posted.status === 503 || isCheckpoint(text) || /security checkpoint|too many requests/i.test(lower)) {
+        if (posted.status === 403 || isCheckpoint(text) || /security checkpoint|verify you are human|challenge-platform/i.test(lower)) {
+            await pauseForCheckpoint(`The campaign request was blocked (HTTP ${posted.status}).`);
+            return 'checkpoint';
+        }
+        if (posted.status === 429 || posted.status === 502 || posted.status === 503 || /too many requests/i.test(lower)) {
             noteVercelLimit();
             return 'rate';
         }
@@ -423,6 +423,7 @@ async function saveOnce(campaignId) {
         const before = await beforePromise;
         if (savedText(posted, text) || await countDropped(campaignId, before)) {
             finishSaved(campaignId);
+            await notifyBrowserScreenshot(`Save result for campaign ${campaignId}`);
             return 'saved';
         }
 
@@ -718,7 +719,7 @@ async function pollCapacity() {
         applyOpenSet(nextOpen);
         if (!baselineReady) takeBaseline(nextOpen);
         settle();
-        if (sessionPause || Date.now() < vercelPauseUntil) return;
+        if (checkpointPause || sessionPause || Date.now() < vercelPauseUntil) return;
 
         openIds.forEach(id => consider(id));
         recatchArmed.forEach(id => {
@@ -834,63 +835,34 @@ function hasImminentWindow() {
     return false;
 }
 
-async function goLogin(nested = false) {
-    if (!config.username || !config.password) {
-        pauseSaves('SET LOGIN');
-        await alertOnce('need-login', '<b>SESSION DOWN</b>\n\nSet SG_SESSION_JSON, or set SG_USERNAME and SG_PASSWORD.');
-        return;
-    }
-    if (store.loginFails >= 3) {
-        pauseSaves('LOGIN FAILED');
-        return;
-    }
-    if (authBusy && !nested) return;
-    if (!nested) authBusy = true;
-    showArmLabel('AUTO LOGIN');
-    try {
-        const result = await loginWithPassword({ deploymentId: currentDeployment() });
-        if (result.ok) {
-            store.loginFails = 0;
-            store.rotateFails = 0;
-            sessionPause = false;
-            showArmLabel('LOGIN RENEWED');
-            await sendTelegram('<b>LOGIN RENEWED</b>');
-            return;
-        }
-        if (result.reason === 'challenge') {
-            noteVercelLimit();
-            return;
-        }
-        store.loginFails += 1;
-        persist();
-        pauseSaves(store.loginFails >= 3 ? 'LOGIN FAILED' : 'LOGIN REJECTED');
-        if (store.loginFails >= 3) {
-            await sendTelegram('<b>LOGIN FAILED</b>\n\nCheck the username and password, then redeploy.');
-        }
-    } finally {
-        if (!nested) authBusy = false;
-    }
+async function goLogin() {
+    pauseSaves('SESSION REQUIRED');
+    await alertOnce('session-transfer-needed', '<b>SESSION REQUIRED</b>\n\nLog in through Safari and transfer your browser session. Automatic login is disabled.');
 }
 
-async function scheduleRotate(recover) {
+async function scheduleRotate() {
     if (Date.now() < store.rotateUntil || authBusy) return;
     store.rotateUntil = Date.now() + 8000;
     authBusy = true;
-    showArmLabel(recover ? 'RENEWING AFTER SNAG' : 'RENEWING LOGIN');
+    showArmLabel('REFRESHING SESSION');
     try {
         const ok = await refreshSession();
         if (ok) {
             store.rotateFails = 0;
             store.rotateUntil = Date.now() + 20 * 60 * 1000;
             sessionPause = false;
-            showArmLabel('LOGIN RENEWED');
+            showArmLabel('SESSION REFRESHED');
+            log('stored browser session refreshed');
             return;
         }
         store.rotateFails += 1;
-        store.rotateUntil = 0;
+        store.rotateUntil = Date.now() + 60 * 1000;
         persist();
-        const left = expiryLeft();
-        if (recover || store.rotateFails >= 2 || left == null || left <= config.dangerBelowMs) await goLogin(true);
+        pauseSaves('SESSION REFRESH NEEDED');
+        if (store.rotateFails === 1 || store.rotateFails % 5 === 0) {
+            log('stored session refresh failed; waiting for a fresh browser session transfer');
+            await alertOnce('session-refresh-needed', '<b>SESSION REFRESH NEEDED</b>\n\nThe saved browser session could not be refreshed. Log in through Safari and transfer the session again. Automatic login is disabled.');
+        }
     } finally {
         authBusy = false;
     }
@@ -907,16 +879,16 @@ async function evaluateSession() {
     }
     if (session && left > config.dangerBelowMs) {
         sessionPause = false;
-        if (!hasImminentWindow()) await scheduleRotate(false);
+        if (!hasImminentWindow()) await scheduleRotate();
         return;
     }
-    if (session?.refresh_token && store.rotateFails < 2) {
-        pauseSaves(session ? 'TOKEN RISK' : 'SIGNED OUT');
-        await scheduleRotate(true);
+    if (session?.refresh_token) {
+        pauseSaves('TOKEN RISK');
+        await scheduleRotate();
         return;
     }
-    pauseSaves(session ? 'TOKEN RISK' : 'SIGNED OUT');
-    if (config.username || session) await goLogin();
+    pauseSaves('SESSION REQUIRED');
+    await alertOnce('session-transfer-needed', '<b>SESSION REQUIRED</b>\n\nLog in through Safari and transfer your browser session. Automatic login is disabled.');
 }
 
 function formatLeft(ms) {
@@ -931,6 +903,10 @@ function formatLeft(ms) {
 function armTick() {
     settle();
     releaseExpiredHolds();
+    if (checkpointPause) {
+        showArmLabel('VERCEL CHECKPOINT');
+        return 1000;
+    }
     const now = clock.now();
     let soonest = null;
     let waitingSpot = false;
@@ -1022,7 +998,7 @@ async function maintenanceLoop() {
                 lastDiscover = now;
                 const found = await discoverBuild();
                 if (found.actionId || found.deploymentId) persist();
-                if (found.blocked) log('site challenge during discovery; saves keep their own pause');
+                if (found.blocked) await pauseForCheckpoint('A site challenge was detected during build discovery.');
             }
             if (now - lastStatus >= 60000) {
                 lastStatus = now;
@@ -1062,7 +1038,8 @@ function snapshot() {
         leadMs: clock.armLead(),
         clockOffsetMs: clock.calibrated ? Math.round(clock.offsetMs) : null,
         session: formatLeft(expiryLeft()),
-        paused: sessionPause,
+        paused: sessionPause || checkpointPause,
+        checkpoint: checkpointPause,
         dryRun: config.dryRun,
         vercelPauseMs: Math.max(0, vercelPauseUntil - Date.now()),
         actionKnown: Boolean(store.actionId || config.defaultActionId),
@@ -1072,15 +1049,18 @@ function snapshot() {
 
 async function boot() {
     loadState();
+    await startPersistentBrowser();
+    const browserState = await getBrowserDiagnostics();
+    if (browserState.checkpoint) await pauseForCheckpoint(`Initial page navigation was blocked (HTTP ${browserState.httpStatus || 'unknown'}).`);
     log(`SubsGigs cloud v19.2.2 poll=${config.fastPollMs}ms dryRun=${config.dryRun} baseline=${config.baseline}`);
-    if (!store.session && !config.username) {
+    if (!store.session) {
         pauseSaves('SET LOGIN');
         await alertOnce('need-login', '<b>SESSION DOWN</b>\n\nSet SG_SESSION_JSON, or set SG_USERNAME and SG_PASSWORD.');
     }
     const found = await discoverBuild();
     if (!store.actionId) store.actionId = config.defaultActionId;
     if (!store.deploymentId) store.deploymentId = config.defaultDeploymentId;
-    if (found.blocked) log('site challenge on boot; session JSON still works for Supabase, saves pause only after a blocked POST');
+    if (found.blocked) await pauseForCheckpoint('The site challenge was also detected during build discovery.');
     persist();
     await evaluateSession();
     await Promise.all([syncProfile(), syncLiveCampaigns(), syncReservations()]);
@@ -1107,4 +1087,18 @@ function busy() {
     return saveInflight.size > 0 || pursuing.size > 0 || authBusy;
 }
 
-export const engine = { boot, start, stop, busy, snapshot };
+
+async function runDummySaveTest() {
+    if (process.env.SG_DUMMY_SAVE_TEST !== 'true') return;
+    const campaignId = '00000000-0000-4000-8000-000000000404';
+    log(`DUMMY SAVE TEST starting campaign=${campaignId}`);
+    try {
+        const response = await submitCampaign(campaignId, currentAction(), routerTree(), currentDeployment());
+        const body = await response.text();
+        log(`DUMMY SAVE TEST result HTTP ${response.status} url=${response.url} body=${replyClip(body) || 'empty reply'}`);
+    } catch (error) {
+        log(`DUMMY SAVE TEST failed: ${error.message}`);
+    }
+}
+
+export const engine = { boot, start, stop, busy, snapshot, runDummySaveTest };
