@@ -998,7 +998,7 @@ async function maintenanceLoop() {
                 lastDiscover = now;
                 const found = await discoverBuild();
                 if (found.actionId || found.deploymentId) persist();
-                if (found.blocked) log('site challenge during discovery; saves keep their own pause');
+                if (found.blocked) await pauseForCheckpoint('A site challenge was detected during build discovery.');
             }
             if (now - lastStatus >= 60000) {
                 lastStatus = now;
