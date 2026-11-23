@@ -64,7 +64,7 @@ const server = http.createServer((req, res) => {
                 applySession(session);
                 log('one-time browser session transfer accepted');
                 send(res, 200, { ok: true }, origin);
-                engine.runDummySaveTest();
+                log('session transfer stored; no test save will be sent automatically');
                 return;
             } catch (error) {
                 return send(res, 500, { ok: false, error: 'could not persist transferred session' }, origin);
